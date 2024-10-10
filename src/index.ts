@@ -11,6 +11,11 @@ const readDirAsync = util.promisify(fs.readdir);
 
 dotenv.config();
 
+type BlobUploadResult = {
+  success: boolean;
+  fileName: string;
+};
+
 async function getFilePathList(
   dir: string,
   prefix: string = ""
@@ -34,7 +39,38 @@ async function getFilePathList(
   return results;
 }
 
+// async function getFileByPath(filesPath: string[], baseDir: string) {
+//   for (let i = 0; i < filesPath.length; i++) {
+//     const filePath = path.join(baseDir, filesPath[i]);
+
+//     try {
+//       const stat = await statAsync(filePath);
+//       if (stat.isDirectory()) {
+//         Logger.warn("Skipping directory", filePath);
+//         continue;
+//       }
+
+//       const data = await readFileAsync(filePath, "utf8");
+//       const res = await uploadToBlob(filesPath[i], data);
+
+//       if (!res.success) {
+//         console.log(
+//           "Upload failed for",
+//           filesPath[i],
+//           "Aborting further uploads."
+//         );
+//         break;
+//       }
+//     } catch (err) {
+//       Logger.error("Error processing file", filePath, err);
+//       break;
+//     }
+//   }
+// }
+
 async function getFileByPath(filesPath: string[], baseDir: string) {
+  const uploadPromises: Promise<BlobUploadResult>[] = [];
+
   for (let i = 0; i < filesPath.length; i++) {
     const filePath = path.join(baseDir, filesPath[i]);
 
@@ -46,24 +82,34 @@ async function getFileByPath(filesPath: string[], baseDir: string) {
       }
 
       const data = await readFileAsync(filePath, "utf8");
-      const success = await uploadToBlob(filesPath[i], data);
-
-      if (!success) {
-        console.log(
-          "Upload failed for",
-          filesPath[i],
-          "Aborting further uploads."
-        );
-        break;
-      }
+      const uploadPromise = uploadToBlob(filesPath[i], data);
+      uploadPromises.push(uploadPromise);
     } catch (err) {
       Logger.error("Error processing file", filePath, err);
       break;
     }
   }
+
+  try {
+    const results = await Promise.all(uploadPromises);
+    const failedUploads = results.filter((result) => !result.success);
+    if (failedUploads.length > 0) {
+      Logger.error(
+        `${failedUploads.length} uploads failed :`,
+        failedUploads[0].fileName
+      );
+    } else {
+      Logger.success("All uploads completed successfully.");
+    }
+  } catch (error) {
+    Logger.error("Error in parallel uploads:", error);
+  }
 }
 
-async function uploadToBlob(fileName: string, file: string) {
+async function uploadToBlob(
+  fileName: string,
+  file: string
+): Promise<BlobUploadResult> {
   try {
     const blob = await put(fileName, file, {
       access: "public",
@@ -73,10 +119,16 @@ async function uploadToBlob(fileName: string, file: string) {
     });
     Logger.highlight("Uploaded", blob.url);
 
-    return true;
+    return {
+      success: true,
+      fileName,
+    };
   } catch (e) {
     Logger.error("Error uploading", fileName, e);
-    return false;
+    return {
+      success: false,
+      fileName,
+    };
   }
 }
 
